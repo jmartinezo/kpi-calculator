@@ -1,0 +1,12 @@
+{
+  "entity_type": "Servicio interno",
+  "is_finalized": false,
+  "start": "13/01/2026 - 10:00",
+  "end": null,
+  "now": "19/01/2026 - 21:00",
+  "stops": [
+    {"type": "Global", "start": "13/01/2026 - 12:00", "end": "13/01/2026 - 17:00"},
+    {"type": "Global", "start": "14/01/2026 - 12:00", "end": "14/01/2026 - 17:00"},
+    {"type": "Interna", "start": "14/01/2026 - 13:00", "end": "15/01/2026 - 20:00"}
+  ]
+}
