@@ -34,8 +34,12 @@ def calculate(entity: EntityInput) -> CalcResult:
     to_date_end = entity.now
 
     # Base durations
-    ttd = working_seconds(entity.start, entity.now, cal)
-    ttm = working_seconds(entity.start, entity.end, cal) if real_end else None
+    if real_end:
+        ttd = working_seconds(entity.start, real_end, cal)   # TTD = TTM cuando finalizada
+    else:
+        ttd = working_seconds(entity.start, entity.now, cal)
+
+    ttm = working_seconds(entity.start, real_end, cal) if real_end else None
 
     def clip_merge_for(stop_types: set[str], w_end) -> Tuple[List[Interval], List[Dict[str, Any]]]:
         raw: List[Interval] = []
@@ -151,6 +155,7 @@ def calculate(entity: EntityInput) -> CalcResult:
         },
         "durations": {
             "ttd_working_seconds": ttd,
+            "ttd_window_end": _dt_str(real_end) if real_end else _dt_str(entity.now),
             "ttm_working_seconds": ttm,
         },
     }
