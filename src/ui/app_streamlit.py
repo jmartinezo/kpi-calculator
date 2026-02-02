@@ -9,10 +9,12 @@ import pandas as pd
 import streamlit as st
 
 from kpi_calc.calculator import calculate
-from kpi_calc.config import SLA_ENTITY_TYPES, OLA_ENTITY_TYPES, DT_FORMAT
+from kpi_calc.config import SLA_ENTITY_TYPES, OLA_ENTITY_TYPES, DT_FORMAT, SLA_STOP_TYPES, OLA_STOP_TYPES
 from kpi_calc.formatting import fmt_duration_dhm
 from kpi_calc.models import EntityInput, Stop
 from kpi_calc.parsing import parse_dt
+from kpi_calc.calendar_es import SpainNationalHolidaysCalendar, working_seconds
+from kpi_calc.intervals import Interval
 
 from datetime import date as dt_date, time as dt_time
 
@@ -110,6 +112,75 @@ def build_entity_input() -> EntityInput:
         stops=stops,
     )
 
+def compute_stop_discounts(entity: EntityInput) -> pd.DataFrame:
+    """
+    Devuelve una tabla derivada con:
+    - acción (kept / clipped / discarded / invalid)
+    - inicio/fin efectivos (tras recorte al ciclo de vida)
+    - descuento hábil (working time) por parada
+    - aplica a SLA/OLA según tipo
+    """
+    cal = SpainNationalHolidaysCalendar()
+
+    window_start = entity.start
+    window_end = entity.end if entity.is_finalized and entity.end is not None else entity.now
+
+    is_sla_entity = entity.entity_type in SLA_ENTITY_TYPES
+    is_ola_entity = entity.entity_type in OLA_ENTITY_TYPES
+
+    rows = []
+    for idx, s in enumerate(entity.stops, start=1):
+        original = Interval(s.start, s.end)
+
+        # Determinar aplicabilidad KPI por tipo de entidad
+        applies_sla = is_sla_entity and (s.stop_type in SLA_STOP_TYPES)
+        applies_ola = is_ola_entity and (s.stop_type in OLA_STOP_TYPES)
+
+        if not original.is_valid():
+            rows.append({
+                "#": idx,
+                "Tipo": s.stop_type,
+                "Inicio": dt_to_str(s.start),
+                "Fin": dt_to_str(s.end),
+                "Acción": "invalid",
+                "Inicio efectivo": None,
+                "Fin efectivo": None,
+                "Descuento (hábil)": "00 d 00 h 00 m",
+                "Aplica a": ("SLA" if applies_sla else "") + (" / " if applies_sla and applies_ola else "") + ("OLA" if applies_ola else "") or "—",
+            })
+            continue
+
+        clipped = original.clip(window_start, window_end)
+        if clipped is None:
+            rows.append({
+                "#": idx,
+                "Tipo": s.stop_type,
+                "Inicio": dt_to_str(s.start),
+                "Fin": dt_to_str(s.end),
+                "Acción": "discarded",
+                "Inicio efectivo": None,
+                "Fin efectivo": None,
+                "Descuento (hábil)": "00 d 00 h 00 m",
+                "Aplica a": ("SLA" if applies_sla else "") + (" / " if applies_sla and applies_ola else "") + ("OLA" if applies_ola else "") or "—",
+            })
+            continue
+
+        action = "kept" if (clipped.start == original.start and clipped.end == original.end) else "clipped"
+        disc_seconds = working_seconds(clipped.start, clipped.end, cal)
+
+        rows.append({
+            "#": idx,
+            "Tipo": s.stop_type,
+            "Inicio": dt_to_str(s.start),
+            "Fin": dt_to_str(s.end),
+            "Acción": action,
+            "Inicio efectivo": dt_to_str(clipped.start),
+            "Fin efectivo": dt_to_str(clipped.end),
+            "Descuento (hábil)": fmt_duration_dhm(disc_seconds),
+            "Aplica a": ("SLA" if applies_sla else "") + (" / " if applies_sla and applies_ola else "") + ("OLA" if applies_ola else "") or "—",
+        })
+
+    return pd.DataFrame(rows)
 
 def validate_inputs(entity: EntityInput) -> List[str]:
     errors: List[str] = []
@@ -293,6 +364,16 @@ def main() -> None:
                         st.error(err)
                 else:
                     res = calculate(entity)
+
+                     # --- Mejora 3: detalle de paradas ---
+                    st.subheader("Paradas (detalle de descuento por fila)")
+                    df_disc = compute_stop_discounts(entity)
+                    st.dataframe(df_disc, use_container_width=True)
+
+                    if entity.entity_type in SLA_ENTITY_TYPES:
+                        st.caption(f"Total paradas SLA (fusionadas): {fmt_duration_dhm(res.stops_sla_seconds)}")
+                    if entity.entity_type in OLA_ENTITY_TYPES:
+                        st.caption(f"Total paradas OLA (fusionadas): {fmt_duration_dhm(res.stops_ola_seconds)}")
 
                     # KPIs aplicables por tipo de entidad
                     is_sla_entity = entity.entity_type in SLA_ENTITY_TYPES
