@@ -14,6 +14,7 @@ from kpi_calc.formatting import fmt_duration_dhm
 from kpi_calc.models import EntityInput, Stop
 from kpi_calc.parsing import parse_dt
 
+from datetime import date as dt_date, time as dt_time
 
 # ----------------------------
 # Helpers UI
@@ -51,33 +52,34 @@ def init_session_state() -> None:
     if "is_finalized" not in st.session_state:
         st.session_state.is_finalized = False
 
-    if "start_str" not in st.session_state:
-        st.session_state.start_str = dt_to_str(datetime.now().replace(hour=9, minute=0, second=0, microsecond=0))
+    # Defaults
+    now_dt = datetime.now().replace(second=0, microsecond=0)
 
-    if "end_str" not in st.session_state:
-        st.session_state.end_str = dt_to_str(datetime.now().replace(hour=18, minute=0, second=0, microsecond=0))
+    if "start_date" not in st.session_state or "start_time" not in st.session_state:
+        start_dt = now_dt.replace(hour=9, minute=0)
+        st.session_state.start_date, st.session_state.start_time = dt_to_date_time(start_dt)
 
-    if "now_str" not in st.session_state:
-        st.session_state.now_str = default_now_str()
+    if "end_date" not in st.session_state or "end_time" not in st.session_state:
+        end_dt = now_dt.replace(hour=18, minute=0)
+        st.session_state.end_date, st.session_state.end_time = dt_to_date_time(end_dt)
+
+    if "now_date" not in st.session_state or "now_time" not in st.session_state:
+        st.session_state.now_date, st.session_state.now_time = dt_to_date_time(now_dt)
 
     if "stops_df" not in st.session_state:
-        st.session_state.stops_df = pd.DataFrame(
-            [
-                {"Tipo": "Global", "Inicio": dt_to_str(datetime.now()), "Fin": dt_to_str(datetime.now())}
-            ]
-        )
+        st.session_state.stops_df = pd.DataFrame(columns=["Tipo", "Inicio", "Fin"])
 
 
 def build_entity_input() -> EntityInput:
     entity_type = st.session_state.entity_type
     is_finalized = st.session_state.is_finalized
 
-    start = str_to_dt(st.session_state.start_str)
-    now = str_to_dt(st.session_state.now_str)
+    start = combine_date_time(st.session_state.start_date, st.session_state.start_time)
+    now = combine_date_time(st.session_state.now_date, st.session_state.now_time)
 
     end: Optional[datetime] = None
-    if is_finalized:
-        end = str_to_dt(st.session_state.end_str)
+    if st.session_state.is_finalized:
+        end = combine_date_time(st.session_state.end_date, st.session_state.end_time)
 
     stops: List[Stop] = []
     df = st.session_state.stops_df.copy()
@@ -146,6 +148,11 @@ def build_case_json(entity: EntityInput) -> Dict[str, Any]:
         ],
     }
 
+def combine_date_time(d: dt_date, t: dt_time) -> datetime:
+    return datetime(d.year, d.month, d.day, t.hour, t.minute)
+
+def dt_to_date_time(dt: datetime) -> tuple[dt_date, dt_time]:
+    return dt.date(), dt_time(dt.hour, dt.minute)
 
 # ----------------------------
 # App
@@ -171,21 +178,68 @@ def main() -> None:
         st.selectbox("Tipo de entidad", ENTITY_TYPES, key="entity_type")
         st.checkbox("Entidad finalizada", key="is_finalized")
 
-        st.text_input(f"Fecha inicio ({DT_FORMAT})", key="start_str")
+        st.markdown("**Fecha inicio**")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.date_input("Día", key="start_date", label_visibility="collapsed")
+        with c2:
+            st.time_input("Hora", key="start_time", label_visibility="collapsed")
+
         if st.session_state.is_finalized:
-            st.text_input(f"Fecha fin ({DT_FORMAT})", key="end_str")
-        st.text_input(f"Fecha actual (now) ({DT_FORMAT})", key="now_str")
+            st.markdown("**Fecha fin**")
+            c3, c4 = st.columns(2)
+            with c3:
+                st.date_input("Día", key="end_date", label_visibility="collapsed")
+            with c4:
+                st.time_input("Hora", key="end_time", label_visibility="collapsed")
+
+        st.markdown("**Fecha actual (now)**")
+        c5, c6 = st.columns(2)
+        with c5:
+            st.date_input("Día", key="now_date", label_visibility="collapsed")
+        with c6:
+            st.time_input("Hora", key="now_time", label_visibility="collapsed")
 
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Now = ahora"):
-                st.session_state.now_str = default_now_str()
+                now_dt = datetime.now().replace(second=0, microsecond=0)
+                st.session_state.now_date, st.session_state.now_time = dt_to_date_time(now_dt)
         with c2:
             if st.button("Limpiar paradas"):
                 st.session_state.stops_df = pd.DataFrame(columns=["Tipo", "Inicio", "Fin"])
 
         st.subheader("2) Paradas")
         st.caption("Edita la tabla. Formato de fecha: dd/mm/yyyy - HH:MM")
+
+        # Formulario para añadir paradas
+        st.markdown("**Añadir parada**")
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1])
+        with c1:
+            new_type = st.selectbox("Tipo", STOP_TYPES, key="new_stop_type")
+        with c2:
+            new_s_date = st.date_input("Inicio día", key="new_s_date")
+        with c3:
+            new_s_time = st.time_input("Inicio hora", key="new_s_time")
+        with c4:
+            new_e_date = st.date_input("Fin día", key="new_e_date")
+        with c5:
+            new_e_time = st.time_input("Fin hora", key="new_e_time")
+
+        if st.button("➕ Añadir a la lista"):
+            sdt = combine_date_time(new_s_date, new_s_time)
+            edt = combine_date_time(new_e_date, new_e_time)
+            st.session_state.stops_df = pd.concat(
+                [
+                    st.session_state.stops_df,
+                    pd.DataFrame([{
+                        "Tipo": new_type,
+                        "Inicio": dt_to_str(sdt),
+                        "Fin": dt_to_str(edt),
+                    }])
+                ],
+                ignore_index=True
+            )
 
         # Editor de tabla (Streamlit >= 1.19)
         st.session_state.stops_df = st.data_editor(
@@ -206,9 +260,15 @@ def main() -> None:
                 data = json.loads(uploaded.read().decode("utf-8"))
                 st.session_state.entity_type = data["entity_type"]
                 st.session_state.is_finalized = bool(data["is_finalized"])
-                st.session_state.start_str = data["start"]
-                st.session_state.end_str = data.get("end") or st.session_state.end_str
-                st.session_state.now_str = data["now"]
+                start_dt = parse_dt(data["start"])
+                st.session_state.start_date, st.session_state.start_time = dt_to_date_time(start_dt)
+
+                if data.get("end"):
+                    end_dt = parse_dt(data["end"])
+                    st.session_state.end_date, st.session_state.end_time = dt_to_date_time(end_dt)
+
+                now_dt = parse_dt(data["now"])
+                st.session_state.now_date, st.session_state.now_time = dt_to_date_time(now_dt)
 
                 stops = data.get("stops", [])
                 st.session_state.stops_df = pd.DataFrame(
